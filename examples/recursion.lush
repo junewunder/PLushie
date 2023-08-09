@@ -1,0 +1,4 @@
+let sum n =
+  if eq n 0 then 0 else add n (sum (sub n 1))
+in sum 5
+

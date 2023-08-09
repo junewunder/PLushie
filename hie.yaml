@@ -1,0 +1,19 @@
+cradle:
+  cabal:
+    # - path: "src/Main.hs"
+    #   component: "plushie:exe:plushie"
+
+    # - path: "src/Parse.hs"
+    #   component: "plushie:exe:plushie"
+
+    # - path: "src/Eval.hs"
+    #   component: "plushie:exe:plushie"
+
+    # - path: "src/Syntax.hs"
+    #   component: "plushie:exe:plushie"
+
+    # - path: "src/Typecheck.hs"
+    #   component: "plushie:exe:plushie"
+
+    # - path: "src/Infra.hs"
+    #   component: "plushie:exe:plushie"

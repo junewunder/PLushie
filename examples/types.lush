@@ -1,0 +1,4 @@
+one : double = 1;
+
+add1 : double -> double
+  = \n. add n 1;
