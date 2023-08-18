@@ -12,6 +12,7 @@ module Infra
   , debug
   , substitute
   , unify
+  , getUnifVars
   , substituteInMap
   , substituteInSubst
   , unifySubsts
@@ -19,6 +20,7 @@ module Infra
   , unifyCtxs
   , throwUnknown
   , rewrite
+  , containsUnifVar
 ) where
 
 import Data.Map (Map)
@@ -29,6 +31,7 @@ import Control.Monad (foldM)
 import qualified Control.Applicative as Subst
 import Debug.Trace (trace, traceShowId)
 import Control.Monad.IO.Class (liftIO, MonadIO)
+import Data.Set (Set)
 
 message s = liftIO $ putStrLn s
 
@@ -41,6 +44,7 @@ class Substitutable m a b where
 
 class Substitutable m a a => Unifiable m a where
   unify :: a -> a -> m (Subst a)
+  getUnifVars :: a -> m (Set Int)
 
 class Rewritable a where
   rewrite :: (a -> a) -> a -> a
@@ -53,6 +57,10 @@ substituteInMap s = mapM (substitute s)
 
 substituteInSubst :: (Monad m, Unifiable m a) => Subst a -> Subst a -> m (Subst a)
 substituteInSubst = substituteInMap
+
+containsUnifVar i x = do
+  unifs <- getUnifVars x
+  return $ i `elem` unifs
 
 -- applies first substitution to second substitution
 unifySubsts :: (MonadIO m, Show a, Unifiable m a, UnknownError m e a, UnknownError m e (a, Subst a)) =>

@@ -124,21 +124,44 @@ instance Unifiable TyChecker Kind where
     unifySubsts s1 s2
   unify k1 k2 = throwError $ TECannotUnifyKinds k1 k2
 
+  getUnifVars _ = return Set.empty
+
 instance Unifiable TyChecker (Type Int) where
-  unify (TUnif i) (TUnif j) = return $ Map.singleton j (TUnif i)
-  unify (TUnif i) t = return $ Map.singleton i t
-  unify t (TUnif i) = return $ Map.singleton i t
-  unify (TFunc i1 o1) (TFunc i2 o2) = do
-    s1 <- unify i1 i2
-    s2 <- unify o1 o2
-    unifySubsts s1 s2
-  unify (TConstr x ts1) (TConstr y ts2) = do
-    if x /= y then
-      throwError (TECannotUnifyTypes (TConstr x ts1) (TConstr y ts2))
-    else do
-      substs <- zipWithM unify ts1 ts2
-      unifySubstsMany substs
-  unify t1 t2 = throwError $ TECannotUnifyTypes t1 t2
+  unify t1 t2 = do
+    message $ "\nunify " ++ show t1 ++ "   with   " ++ show t2
+    case (t1, t2) of
+      ((TUnif i), (TUnif j)) | i == j -> return $ Map.empty
+      ((TUnif i), (TUnif j)) -> return $ Map.singleton j (TUnif i)
+      ((TUnif i), t) -> do
+        contains <- containsUnifVar i t
+        if contains then throwError $ TECannotUnifyTypes (TUnif i) t
+        else return $ Map.singleton i t
+      (t, (TUnif i)) -> do
+        contains <- containsUnifVar i t
+        if contains then throwError $ TECannotUnifyTypes (TUnif i) t
+        else return $ Map.singleton i t
+      ((TFunc i1 o1), (TFunc i2 o2)) -> do
+        s1 <- unify i1 i2
+        s2 <- unify o1 o2
+        unifySubsts s1 s2
+      ((TConstr x ts1), (TConstr y ts2)) -> do
+        if x /= y then
+          throwError (TECannotUnifyTypes (TConstr x ts1) (TConstr y ts2))
+        else do
+          substs <- zipWithM unify ts1 ts2
+          unifySubstsMany substs
+      (_, _) -> throwError $ TECannotUnifyTypes t1 t2
+
+  getUnifVars t = case t of
+    TVar _ -> return Set.empty
+    TUnif i -> return $ Set.singleton i
+    TFunc i o -> do
+      iVars <- getUnifVars i
+      oVars <- getUnifVars o
+      return $ iVars `Set.union` oVars
+    TConstr _ ts -> do
+      tsVars <- mapM getUnifVars ts
+      return $ foldl' Set.union Set.empty tsVars
 
 getSchCtx :: TyChecker SchemaCtx
 getSchCtx = asks schCtx
@@ -202,11 +225,9 @@ instSch (SForall x s) = do
 
 generalize :: TType -> TyChecker TSchema
 generalize ty = do
-  message "generalize"
   ctxUnifVars <- ctxUnifVars
   let unifIdxsSet = unifVars ty Set.\\ ctxUnifVars
   let unifIdxs = sort $ toList $ unifVars ty
-  debug "unifIdxs" unifIdxs
   let unifs = [97..97 + length unifIdxs - 1] -- TODO: handle more than 26 unif vars
   let tyVarNames = map (XId . (:[]) . chr) unifs
   let tyVars :: [TType]
@@ -214,7 +235,6 @@ generalize ty = do
   let namesAndVars = zip tyVarNames tyVars
   let subst = Map.fromList $ zip unifIdxs tyVars
   ty <- substitute subst ty
-  message "/generalize"
   return $ foldr SForall (SMono ty) tyVarNames
   where
     unifVars (TUnif i) = Set.singleton i
@@ -239,9 +259,13 @@ checkProgram (d : ds) = do
 
 checkDecl :: PDecl -> TyChecker (Context, TySubst)
 checkDecl (DVal name pt body) = do
+  message ""
+  debug "DECL DVAL name" name
   (bodyTy, subst) <- checkExpr body
   bodySch <- generalize bodyTy
   let ctx = extendSchemaCtx name bodySch emptyCtx
+  debug "END DECL DVAL name" name
+  message ""
   return (ctx, subst)
 checkDecl d = throwError $ TEUnimplemented $ show d
 
@@ -273,7 +297,8 @@ checkExpr (ELam x body) = do
     return (fnTy, subst)
 
 checkExpr (EApp func arg) = do
-  debug "checkExpr EApp:" (EApp func arg)
+  message ""
+  debug "BEGIN checkExpr EApp:" (EApp func arg)
   (funcTy, funcSubst) <- checkExpr func
   debug "checkExpr EApp funcTy:" funcTy
   debug "checkExpr EApp funcSubst:" (Map.keys funcSubst)
@@ -287,30 +312,52 @@ checkExpr (EApp func arg) = do
   let inTy = TUnif i
   let outTy = TUnif j
   funcUnifSubst <- unify (TFunc inTy outTy) funcTy
+  debug "hello" 1
   subst <- unifySubstsMany [funcSubst, argSubst, funcUnifSubst]
+  debug "hello" 2
   inTy <- substitute subst inTy
+  debug "hello" 3
   outTy <- substitute subst outTy
+  debug "hello" 4
+  tmp <- getSchCtx
+  debug "schCtx" (tmp Map.!? (XId "pAdd"))
+  debug "inTy" inTy
+  debug "argTy" argTy
   inTySubst <- unify inTy argTy
+  debug "hello" 5
+  debug "subst1" subst
+  debug "subst2" inTySubst
   subst <- unifySubsts subst inTySubst
+  debug "hello" 6
+
+  debug "END checkExpr EApp" (EApp func arg)
   return (TFunc inTy outTy, subst)
 
--- checkExpr (ELet boundX bound body) = do
+checkExpr (ELet boundX bound body) = do
+  (boundTy, boundSubst) <- checkExpr bound
 
---   -- DON"T TRY TO BE TOO CLEVER HERE
---   -- TODO: VALUES CANNOT NOT BE RECURSIVE
+  boundSch <- generalize boundTy
+  (bodyTy, bodySubst) <- withExtendedSchemaCtx boundX boundSch (checkExpr body)
 
---   -- i <- newUnifIdx
---   -- let boundTyUnif = TUnif i
---   (boundTy, boundSubst) <- checkExpr bound
---   throwError $ TEUnimplemented $ show (ELet boundX bound body)
---   -- boundUnifSubst <- unify boundTyUnif boundTy
---   -- boundSubst <- unifySubsts boundSubst boundUnifSubst
---   -- boundTy <- substitute boundSubst boundTy
---   -- boundSch <- generalize boundTy
---   -- (bodyTy, bodySubst) <- withExtendedSchemaCtx boundX boundSch (checkExpr body)
---   -- subst <- unifySubsts boundSubst bodySubst
---   -- bodyTy <- substitute subst bodyTy
---   -- return (bodyTy, subst)
+  subst <- unifySubsts boundSubst bodySubst
+  return (bodyTy, subst)
+
+
+  -- DON"T TRY TO BE TOO CLEVER HERE
+  -- TODO: VALUES CANNOT NOT BE RECURSIVE
+
+  -- i <- newUnifIdx
+  -- let boundTyUnif = TUnif i
+  -- (boundTy, boundSubst) <- checkExpr bound
+  -- throwError $ TEUnimplemented $ show (ELet boundX bound body)
+  -- boundUnifSubst <- unify boundTyUnif boundTy
+  -- boundSubst <- unifySubsts boundSubst boundUnifSubst
+  -- boundTy <- substitute boundSubst boundTy
+  -- boundSch <- generalize boundTy
+  -- (bodyTy, bodySubst) <- withExtendedSchemaCtx boundX boundSch (checkExpr body)
+  -- subst <- unifySubsts boundSubst bodySubst
+  -- bodyTy <- substitute subst bodyTy
+  -- return (bodyTy, subst)
 
 -- -- checkExpr (EIf ex ex' ex2) = _
 

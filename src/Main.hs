@@ -1,6 +1,6 @@
 module Main where
 
--- import Parse
+import Parse
 -- import Text.Parsec (parse)
 import Syntax
 -- import Eval
@@ -11,6 +11,10 @@ import Typecheck(Context)
 import Control.Monad.Reader (ReaderT(runReaderT))
 import Control.Monad.State (StateT(runStateT))
 import Control.Monad.Except (runExceptT)
+import Control.Monad.Identity (Identity(runIdentity))
+import Text.Megaparsec
+import GHC.Base (failIO)
+import Infra (debug, message)
 
 -- tracePrim :: Value -> Either RunTimeError Value
 -- tracePrim x = Right $ trace (show x) x
@@ -44,34 +48,55 @@ import Control.Monad.Except (runExceptT)
 --     , binopDoubleBoolPrim "eq" (==)
 --     ]
 
+tyCheckProgram ctx st prog = do
+  res <- runTyChecker (checkProgram prog) ctx st
+  case res of
+    Right (ctx, st) -> do
+      print st
+      print ctx
+      print $ schCtx ctx Map.! XId "_"
+    Left e -> do print e
+
+
 tyCheckFile file = do
-  -- program <- readFile file
-  -- let ast = case parse programP "" program of
-  --       Left err -> error $ show err
-  --       Right e -> e
-  -- print ast
-  let ast =
-        [ DVal (XId "foo") Nothing (EVar (XId "bar"))
-        , DVal (XId "id") Nothing (ELam (XId "x") (EVar . XId $ "x"))
-      --   , DVal (XId "baz") Nothing (ELet (XId "flop") (EVar $ XId "flop") (EVar (XId "")))
-        , DVal (XId "addd") Nothing (ELam (XId "x") (ELam (XId "y") (EApp (EApp (EVar . XId $ "add") (EVar . XId $ "x")) (EVar . XId $ "y") )))
-        ]
-  let initSchCtx = Map.fromList
-        [ (XId "bar", SForall (XId "a") (SMono $ TVar (XId "a")))
-        , (XId "add", SMono (TFunc (TConstr (XId "int") []) (TFunc (TConstr (XId "int") []) (TConstr (XId "int") []))))
-        ]
-  let initKindCtx = Map.fromList
-        [ (XId "double", KStar)
-        ]
-  let ctx = Context initSchCtx initKindCtx
-  let st = initialState
-  idk <- runTyChecker (checkProgram ast) ctx st
-  print idk
-  -- let v = eval ast env
-  -- print v
+  putStrLn ""
+  parseTestExpr "if () then () else ()"
+  putStrLn ""
+  parseTestExpr "() () () ()"
+  putStrLn ""
+  parseTestExpr "let u = () in ()"
+  putStrLn ""
+  parseTestExpr "let x = () in \n let y = () in \n ()"
+  putStrLn ""
+  parseTestExpr "let x = \\blop. hey in \n let y = () in \n ()"
+  putStrLn ""
+
+  program <- readFile file
+  case parseProgram (show file) program of
+    Left err -> do
+      putStrLn $ errorBundlePretty err
+      failIO ""
+    Right ast -> do
+      print ast
+      let initSchCtx = Map.fromList
+            [ (XId "bar", SForall (XId "a") (SMono $ TVar (XId "a")))
+            , (XId "add", SMono (TFunc (TConstr (XId "int") []) (TFunc (TConstr (XId "int") []) (TConstr (XId "int") []))))
+            ]
+      let initKindCtx = Map.fromList
+            [ (XId "double", KStar)
+            ]
+      let ctx = Context initSchCtx initKindCtx
+      let st = initialState
+      -- idk <- runTyChecker (checkProgram ast) ctx st
+      message ""
+      res <- runTyChecker (checkProgram ast) ctx st
+      case res of
+        Right (ctx, st) ->
+          mapM_ (\((XId k), v) -> putStrLn $ k ++ " = " ++ show v) (Map.assocs $ schCtx ctx)
+        Left err -> do print err
 
 main :: IO ()
 main = do
-  -- evalFile "examples/peano.lush"
+  tyCheckFile "examples/peano.lush"
   -- evalFile "examples/recursion.lush"
-  tyCheckFile "examples/types.lush"
+  -- tyCheckFile "examples/types.lush"

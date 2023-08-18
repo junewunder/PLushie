@@ -21,7 +21,9 @@ executable plushie
       base >= 4.7 && < 5
     , containers
     , megaparsec
+    , parser-combinators
     , mtl >= 2.3.1
+    , prettyprinter
   other-modules:
       Parse
     , Eval

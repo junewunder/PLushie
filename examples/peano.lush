@@ -1,13 +1,13 @@
-let id x = x in
+let id x = x
 
-let zero f x = x in
-let suc n f x = f (n f x) in
+let zero f x = x
+let suc n f x = f (n f x)
 
-let pAdd n m f x = n f (m f x) in
-let pMul n m = n (pAdd m) zero in
+let pAdd n m f x = n f (m f x)
+let pMul n m = n (pAdd m) zero
 
-let three = (suc (suc (suc zero))) in
-let six = pAdd three three in
+//let three = suc (suc (suc zero))
+//let six = pAdd three three
 
-pMul three six (add 1) 0
+// let main = pMul three six (add 1) 0
 

@@ -1,7 +1,41 @@
 module Parse where
 
 import Text.Megaparsec
+import Control.Monad.Combinators
+import Control.Monad.Combinators.Expr
 import Syntax
+import qualified Text.Megaparsec.Char.Lexer as L
+import Control.Monad.Identity (Identity (runIdentity), IdentityT (runIdentityT))
+import Text.Megaparsec.Char (char, string, space1, letterChar, alphaNumChar)
+
+import qualified Data.Set as Set
+import Data.Char (isUpper)
+import Data.Foldable (Foldable(foldl'))
+
+
+add x y = 0 + x + y
+
+id x = x
+
+zero f x = x
+suc n f x = f (n f x)
+
+pAdd n m f x = n f (m f x)
+pMul n m = n (pAdd m) zero
+
+three = suc (suc (suc zero))
+six = pAdd three three
+
+x = pMul three six (add 1) 0
+
+
+
+-- import Data.Foldable
+
+-- identUpper =
+-- identLower
+
+
 -- import Text.Megaparsec.String
 
 -- import qualified Text.Megaparsec.Token as T
@@ -85,36 +119,101 @@ import Syntax
 --     --     *> notFollowedBy (choice . map reservedOp $ allReserved) $> _
 --     -- allReserved = T.reservedOpNames haskellDef ++ T.reservedNames haskellDef
 
--- exprP :: Parser PExpr
--- exprP = buildExpressionParser opTable termP
+instance ShowErrorComponent () where
+  showErrorComponent () = "()"
 
--- termP :: Parser PExpr
--- termP =
+type Parser a = ParsecT () String Identity a
+type ExprParser = Parser PExpr
 
---     identP
---     <|> unitP
---     <|> doubleP
---     <|> stringP
---     <|> lamP
---     <|> letP
---     <|> ifP
---     <|> parens exprP
+parseProgram file s = parse programP file s
+parseDecl file s = parse declP file s
+parseExpr file s = parse exprP file s
 
--- opTable =
---   [ [app]
---   ]
---   where
---     binary name label = Infix (do
---       reservedOp name
---       return label)
---     app = Infix space AssocLeft
---     space =
---       (whiteSpace
---         *> notFollowedBy (choice . map reservedOp $ allReserved)) $> EApp
---     allReserved = T.reservedOpNames haskellDef ++ T.reservedNames haskellDef
+parseTestExpr s = parseTest (exprP <* eof) s
 
--- unitP = reserved "()" >> return EUnit
--- identP = EVar . XId <$> identifier
+lineComment = L.skipLineComment "//"
+
+blockComment =  L.skipBlockCommentNested "/*" "*/"
+
+spaceConsumer :: Parser ()
+spaceConsumer = L.space space1 lineComment blockComment
+
+lexeme = L.lexeme spaceConsumer
+integer = lexeme L.decimal
+
+symbol = L.symbol spaceConsumer
+
+keyword s = lexeme (string s <* notFollowedBy alphaNumChar)
+
+parens = between (symbol "(") (symbol ")")
+braces    = between (symbol "{") (symbol "}")
+angles    = between (symbol "<") (symbol ">")
+brackets  = between (symbol "[") (symbol "]")
+semicolon = symbol ";"
+comma     = symbol ","
+colon     = symbol ":"
+dot       = symbol "."
+
+reservedList =
+  [ "if"
+  , "then"
+  , "else"
+  , "let"
+  , "in"
+  , "where"
+  ]
+
+identifier :: Parser String
+identifier = (lexeme . try) (p >>= check)
+ where
+   p       = (:) <$> (letterChar <|> char '_') <*> many (alphaNumChar <|> char '_')
+   check x =
+     if x `elem` reservedList
+     then fail $ "keyword " ++ show x ++ " cannot be an identifier"
+     else return x
+
+-- tyConstructor :: Parser String
+-- tyConstructor = _ satisfy (isUpper . head)
+
+
+programP :: Parser Program
+programP = many declP
+
+declP :: Parser PDecl
+declP = dValP
+
+dValP = do
+  keyword "let"
+  binder <- identifier
+  xs <- many identifier -- TODO: allow type annotations
+  symbol "="
+  body <- exprP
+  let curried = curryLam xs body
+  return $ DVal (XId binder) Nothing curried
+
+exprP :: ExprParser
+exprP =
+  try appP
+  <|> try closedP
+  <|> try letP
+  <|> try ifThenElseP
+  <|> lamP
+  <?> "expression"
+
+-- exprP :: ExprParser
+-- exprP = makeExprParser termP opTable <?> "expression"
+
+closedP :: ExprParser
+closedP =
+  try unitP
+  <|> try identP
+  -- <|> try doubleP
+  -- <|> try stringP
+  <|> try (parens exprP)
+
+unitP = symbol "()" >> return EUnit
+identP = EVar . XId <$> identifier
+
 -- doubleP = do
 --   n <- T.naturalOrFloat lexer
 --   return $ case n of
@@ -122,42 +221,114 @@ import Syntax
 --     Left n -> EDouble $ fromIntegral n
 
 -- stringP =
---   EStr <$> T.stringLiteral lexer
+--   EStr <$> string
 
--- curryLam xs body =
---   let xs' = map XId xs in
---   foldr ELam body xs'
+curryLam xs body =
+  let xs' = map XId xs in
+  foldr ELam body xs'
 
--- -- argP = do
--- --   identifier <$> AUntyped
--- --   <|> parens $ do
--- --     x <- identifier
--- --     reservedOp ":"
--- --     t <- identifier
--- --     return $ ATyped x t
+appP = do
+  f <- closedP
+  es <- many closedP
+  return $ foldl' EApp f es
 
--- lamP = do
---   reservedOp "\\"
---   xs <- many1 identifier
---   reserved "."
---   curryLam xs <$> exprP
+lamP = do
+  symbol "\\"
+  xs <- some identifier
+  symbol "."
+  body <- exprP
+  return $ curryLam xs body
 
--- letP = do
---   reserved "let"
+letP = do
+  keyword "let"
+  x <- identifier
+  args <- many identifier
+  symbol "="
+  e1 <- exprP
+  keyword "in"
+  e2 <- exprP
+  let e1' = curryLam args e1
+  return $ ELet (XId x) e1' e2
+
+ifThenElseP = do
+  keyword "if"
+  cond <- exprP
+  keyword "then"
+  branchTrue <- exprP
+  keyword "else"
+  branchFalse <- exprP
+  return $ EIf cond branchTrue branchFalse
+
+-- expr = makeExprParser term table <?> "expression"
+
+-- term = parens expr <|> integer <?> "term"
+
+-- table = [ [ prefix  "-"  negate
+--           , prefix  "+"  id ]
+--         , [ postfix "++" (+1) ]
+--         , [ binary  "*"  (*)
+--           , binary  "/"  div  ]
+--         , [ binary  "+"  (+)
+--           , binary  "-"  (-)  ] ]
+
+-- binary  name f = InfixL  (f <$ symbol name)
+-- prefix  name f = Prefix  (f <$ symbol name)
+-- postfix name f = Postfix (f <$ symbol name)
+
+-- opTable :: [[Operator (ParsecT () String Identity) PExpr]]
+-- opTable =
+--   [ [appP]
+--   , [letP]
+--   , [ifThenElseP]
+--   , [lamP]
+--   ]
+--   where
+--     -- app = infixL space
+--     -- space = _
+--     --   (whiteSpace
+--     --     *> notFollowedBy (choice . map reservedOp $ allReserved)) $> EApp
+--     -- allReserved = T.reservedOpNames haskellDef ++ T.reservedNames haskellDef
+
+-- infixN  name f = InfixN  (f <$ symbol name)
+-- infixL  name f = InfixL  (f <$ symbol name)
+-- infixR  name f = InfixR  (f <$ symbol name)
+-- prefix  name f = Prefix  (f <$ symbol name)
+-- postfix name f = Postfix (f <$ symbol name)
+
+
+-- argP = do
+--   identifier <$> AUntyped
+--   <|> parens $ do
+--     x <- identifier
+--     reservedOp ":"
+--     t <- identifier
+--     return $ ATyped x t
+
+
+-- appP = InfixL $ try $ do
+--   spaceConsumer
+--   return EApp
+
+-- lamP = Prefix $ try $ do
+--   symbol "\\"
+--   xs <- some identifier
+--   symbol "."
+--   return $ curryLam xs
+
+-- letP = Prefix $ try $ do
+--   keyword "let"
 --   x <- identifier
 --   args <- many identifier
---   reserved "="
+--   symbol "="
 --   e1 <- exprP
---   reserved "in"
---   e2 <- exprP
+--   keyword "in"
 --   let e1' = curryLam args e1
---   return $ ELet (XId x) e1' e2
+--   return $ ELet (XId x) e1'
 
--- ifP = do
---   reserved "if"
---   e1 <- exprP
---   reserved "then"
---   e2 <- exprP
---   reserved "else"
---   EIf e1 e2 <$> exprP
-
+-- ifThenElseP = Prefix $ try $ do
+--   keyword "if"
+--   cond <- exprP
+--   keyword "then"
+--   branchTrue <- exprP
+--   keyword "else"
+--   return $ EIf cond branchTrue
