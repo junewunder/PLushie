@@ -1,9 +1,12 @@
+
+
 module Syntax where
 
 import Data.List
 import Data.Void (Void)
 import Infra
 import qualified Data.List as List
+import Prettyprinter
 
 data X
   = XId String
@@ -85,3 +88,14 @@ instance Rewritable (Type u) where
 
 getTyFromSch (SMono t) = t
 getTyFromSch (SForall _ s) = getTyFromSch s
+
+instance Pretty X where
+  pretty (XId x) = pretty x
+  pretty (XDot x xx) = pretty x <> dot <> pretty xx
+
+instance (Show u, Pretty u) => Pretty (Type u) where
+  pretty (TVar x) = pretty x
+  pretty (TUnif i) = pretty "$" <> pretty i
+  pretty (TFunc (TFunc ii io) o) = (parens $ pretty (TFunc ii io)) <> pretty " -> " <> pretty o
+  pretty (TFunc i o) = pretty i <> pretty " -> " <> pretty o
+  pretty (TConstr x tys) = pretty x <> pretty tys

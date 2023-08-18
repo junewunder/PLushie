@@ -6,6 +6,7 @@
     "cond",
     "HLINT",
     "idxs",
+    "Prettyprinter",
     "Rewritable",
     "Substs",
     "Typecheck",

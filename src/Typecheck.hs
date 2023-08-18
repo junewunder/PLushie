@@ -39,6 +39,7 @@ import Data.Foldable
 import GHC.TopHandler (runMainIO)
 import Data.Char (chr)
 import Data.List (sort)
+import Prettyprinter
 
 type SchemaCtx = Map X TSchema
 type KindCtx = Map X Kind
@@ -128,7 +129,7 @@ instance Unifiable TyChecker Kind where
 
 instance Unifiable TyChecker (Type Int) where
   unify t1 t2 = do
-    message $ "\nunify " ++ show t1 ++ "   with   " ++ show t2
+    message $ "\nunify " ++ (show $ pretty t1) ++ "   with   " ++ (show $ pretty t2)
     case (t1, t2) of
       ((TUnif i), (TUnif j)) | i == j -> return $ Map.empty
       ((TUnif i), (TUnif j)) -> return $ Map.singleton j (TUnif i)
